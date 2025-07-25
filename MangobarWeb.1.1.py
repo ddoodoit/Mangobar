@@ -48,9 +48,11 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
     conn = sqlite3.connect(DB_PATH)
 
     region_clauses = []
+    params_region = []
     for region in selected_regions:
-        prefix = region[:4].lower()
-        region_clauses.append(f"_ADDR_LOWER LIKE '{prefix}%'")
+        prefix = region[:4].lower() + '%'
+        region_clauses.append("_ADDR_LOWER LIKE ?")
+        params_region.append(prefix)
     region_condition = " OR ".join(region_clauses) if region_clauses else "1=1"
 
     query_addr = query_addr.lower() if query_addr else ""
@@ -72,7 +74,7 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
         AND _BSSH_NORM LIKE ?
     """
 
-    params = (f"%{query_addr}%", f"%{query_bssh_norm}%")
+    params = params_region + [f"%{query_addr}%", f"%{query_bssh_norm}%"]
 
     df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params)
     df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params)
@@ -104,7 +106,7 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
 
 
 
-from rapidfuzz import fuzz
+
 
 def fuzzy_search(df, query, threshold=75):
     query_norm = query.replace(" ", "").lower()
