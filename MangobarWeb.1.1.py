@@ -51,36 +51,47 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
     params_region = []
     for region in selected_regions:
         prefix = region[:4].lower() + '%'
-        region_clauses.append("_ADDR_LOWER LIKE ?")
+        region_clauses.append("LOWER(ADDR) LIKE ?")  # 예: 주소 컬럼 이름 맞게 수정 필요
         params_region.append(prefix)
     region_condition = " OR ".join(region_clauses) if region_clauses else "1=1"
-
-    query_addr = query_addr.lower() if query_addr else ""
-    query_bssh_norm = query_bssh.replace(" ", "").lower() if query_bssh else ""
 
     sql_i2500 = f"""
         SELECT LCNS_NO, INDUTY_CD_NM, BSSH_NM, ADDR, PRMS_DT
         FROM i2500
         WHERE ({region_condition})
-        AND _ADDR_LOWER LIKE ?
-        AND _BSSH_NORM LIKE ?
+        LIMIT {PAGE_SIZE} OFFSET {offset}
     """
 
     sql_i2819 = f"""
         SELECT LCNS_NO, INDUTY_NM, BSSH_NM, LOCP_ADDR, PRMS_DT, CLSBIZ_DT, CLSBIZ_DVS_CD_NM
         FROM i2819
         WHERE ({region_condition})
-        AND _ADDR_LOWER LIKE ?
-        AND _BSSH_NORM LIKE ?
+        LIMIT {PAGE_SIZE} OFFSET {offset}
     """
 
-    params = params_region + [f"%{query_addr}%", f"%{query_bssh_norm}%"]
-
-    df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params)
-    df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params)
+    df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params_region)
+    df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params_region)
 
     conn.close()
 
+    # 주소, 업소명 소문자+공백제거 컬럼 추가
+    df_i2500["_ADDR_LOWER"] = df_i2500["ADDR"].fillna("").str.lower()
+    df_i2500["_BSSH_NORM"] = df_i2500["BSSH_NM"].fillna("").str.replace(" ", "").str.lower()
+    df_i2819["_ADDR_LOWER"] = df_i2819["LOCP_ADDR"].fillna("").str.lower()
+    df_i2819["_BSSH_NORM"] = df_i2819["BSSH_NM"].fillna("").str.replace(" ", "").str.lower()
+
+    # pandas 필터링
+    if query_addr:
+        query_addr_lower = query_addr.lower()
+        df_i2500 = df_i2500[df_i2500["_ADDR_LOWER"].str.contains(query_addr_lower)]
+        df_i2819 = df_i2819[df_i2819["_ADDR_LOWER"].str.contains(query_addr_lower)]
+
+    if query_bssh:
+        query_bssh_norm = query_bssh.replace(" ", "").lower()
+        df_i2500 = df_i2500[df_i2500["_BSSH_NORM"].str.contains(query_bssh_norm)]
+        df_i2819 = df_i2819[df_i2819["_BSSH_NORM"].str.contains(query_bssh_norm)]
+
+    # 컬럼명 변경 및 반환
     df_i2500_display = df_i2500.rename(columns={
         "LCNS_NO": "인허가번호",
         "INDUTY_CD_NM": "업종",
@@ -99,12 +110,7 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
         "CLSBIZ_DVS_CD_NM": "폐업상태",
     })
 
-    df_i2500_display["_BSSH_NORM"] = df_i2500_display["업소명"].fillna("").str.replace(" ", "").str.lower()
-    df_i2819_display["_BSSH_NORM"] = df_i2819_display["업소명"].fillna("").str.replace(" ", "").str.lower()
-
     return df_i2500_display, df_i2819_display
-
-
 
 
 
