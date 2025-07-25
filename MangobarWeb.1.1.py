@@ -12,17 +12,31 @@ import os
 
 PAGE_SIZE = 200
 I2861_SERVICE_ID = "I2861"
-
+DB_URL = "https://drive.google.com/uc?export=download&id=1cjYTpM40hMOs817KvSOWq1HmLkvUdCXn"
 DB_PATH = "mangobardata.db"
+DATE_PATH = "db_last_download.txt"  # 다운로드한 날짜 저장용 파일
 
-def download_db():
-    file_id = "1cjYTpM40hMOs817KvSOWq1HmLkvUdCXn"
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)  # 항상 최신 버전으로
-    gdown.download(f"https://drive.google.com/uc?id={file_id}", DB_PATH, quiet=False)
+def download_db_once_per_day():
+    today_str = datetime.date.today().isoformat()
+    # 이전 다운로드 날짜 읽기
+    if os.path.exists(DATE_PATH):
+        with open(DATE_PATH, "r") as f:
+            last_date = f.read().strip()
+    else:
+        last_date = ""
 
+    if last_date != today_str:
+        print("오늘 날짜와 다르므로 DB를 새로 다운로드합니다.")
+        r = requests.get(DB_URL)
+        with open(DB_PATH, "wb") as f:
+            f.write(r.content)
+        with open(DATE_PATH, "w") as f:
+            f.write(today_str)
+    else:
+        print("이미 오늘 다운로드 완료했습니다. 기존 파일 사용.")
 
-download_db()  # ✅ 앱 시작 시 자동 다운로드
+# 프로그램 시작 시 호출
+download_db_once_per_day()
 
 
 st.set_page_config(page_title="MangoBar 웹 검색", layout="wide")
