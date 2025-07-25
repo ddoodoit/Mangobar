@@ -1,7 +1,6 @@
 import streamlit as st
 import xml.etree.ElementTree as ET
 import time
-import datetime
 import requests
 import sqlite3
 import gdown
@@ -13,31 +12,17 @@ import os
 
 PAGE_SIZE = 200
 I2861_SERVICE_ID = "I2861"
-DB_URL = "https://drive.google.com/uc?export=download&id=1cjYTpM40hMOs817KvSOWq1HmLkvUdCXn"
+
 DB_PATH = "mangobardata.db"
-DATE_PATH = "db_last_download.txt"  # 다운로드한 날짜 저장용 파일
 
-def download_db_once_per_day():
-    today_str = datetime.date.today().isoformat()
-    # 이전 다운로드 날짜 읽기
-    if os.path.exists(DATE_PATH):
-        with open(DATE_PATH, "r") as f:
-            last_date = f.read().strip()
-    else:
-        last_date = ""
+def download_db():
+    file_id = "1cjYTpM40hMOs817KvSOWq1HmLkvUdCXn"
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)  # 항상 최신 버전으로
+    gdown.download(f"https://drive.google.com/uc?id={file_id}", DB_PATH, quiet=False)
 
-    if last_date != today_str:
-        print("오늘 날짜와 다르므로 DB를 새로 다운로드합니다.")
-        r = requests.get(DB_URL)
-        with open(DB_PATH, "wb") as f:
-            f.write(r.content)
-        with open(DATE_PATH, "w") as f:
-            f.write(today_str)
-    else:
-        print("이미 오늘 다운로드 완료했습니다. 기존 파일 사용.")
 
-# 프로그램 시작 시 호출
-download_db_once_per_day()
+download_db()  # ✅ 앱 시작 시 자동 다운로드
 
 
 st.set_page_config(page_title="MangoBar 웹 검색", layout="wide")
@@ -48,50 +33,37 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
     conn = sqlite3.connect(DB_PATH)
 
     region_clauses = []
-    params_region = []
     for region in selected_regions:
-        prefix = region[:4].lower() + '%'
-        region_clauses.append("LOWER(ADDR) LIKE ?")  # 예: 주소 컬럼 이름 맞게 수정 필요
-        params_region.append(prefix)
+        prefix = region[:4].lower()
+        region_clauses.append(f"_ADDR_LOWER LIKE '{prefix}%'")
     region_condition = " OR ".join(region_clauses) if region_clauses else "1=1"
+
+    query_addr = query_addr.lower() if query_addr else ""
+    query_bssh_norm = query_bssh.replace(" ", "").lower() if query_bssh else ""
 
     sql_i2500 = f"""
         SELECT LCNS_NO, INDUTY_CD_NM, BSSH_NM, ADDR, PRMS_DT
         FROM i2500
         WHERE ({region_condition})
-        LIMIT {PAGE_SIZE} OFFSET {offset}
+        AND _ADDR_LOWER LIKE ?
+        AND _BSSH_NORM LIKE ?
     """
 
     sql_i2819 = f"""
         SELECT LCNS_NO, INDUTY_NM, BSSH_NM, LOCP_ADDR, PRMS_DT, CLSBIZ_DT, CLSBIZ_DVS_CD_NM
         FROM i2819
         WHERE ({region_condition})
-        LIMIT {PAGE_SIZE} OFFSET {offset}
+        AND _ADDR_LOWER LIKE ?
+        AND _BSSH_NORM LIKE ?
     """
 
-    df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params_region)
-    df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params_region)
+    params = (f"%{query_addr}%", f"%{query_bssh_norm}%")
+
+    df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params)
+    df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params)
 
     conn.close()
 
-    # 주소, 업소명 소문자+공백제거 컬럼 추가
-    df_i2500["_ADDR_LOWER"] = df_i2500["ADDR"].fillna("").str.lower()
-    df_i2500["_BSSH_NORM"] = df_i2500["BSSH_NM"].fillna("").str.replace(" ", "").str.lower()
-    df_i2819["_ADDR_LOWER"] = df_i2819["LOCP_ADDR"].fillna("").str.lower()
-    df_i2819["_BSSH_NORM"] = df_i2819["BSSH_NM"].fillna("").str.replace(" ", "").str.lower()
-
-    # pandas 필터링
-    if query_addr:
-        query_addr_lower = query_addr.lower()
-        df_i2500 = df_i2500[df_i2500["_ADDR_LOWER"].str.contains(query_addr_lower)]
-        df_i2819 = df_i2819[df_i2819["_ADDR_LOWER"].str.contains(query_addr_lower)]
-
-    if query_bssh:
-        query_bssh_norm = query_bssh.replace(" ", "").lower()
-        df_i2500 = df_i2500[df_i2500["_BSSH_NORM"].str.contains(query_bssh_norm)]
-        df_i2819 = df_i2819[df_i2819["_BSSH_NORM"].str.contains(query_bssh_norm)]
-
-    # 컬럼명 변경 및 반환
     df_i2500_display = df_i2500.rename(columns={
         "LCNS_NO": "인허가번호",
         "INDUTY_CD_NM": "업종",
@@ -110,9 +82,14 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
         "CLSBIZ_DVS_CD_NM": "폐업상태",
     })
 
+    df_i2500_display["_BSSH_NORM"] = df_i2500_display["업소명"].fillna("").str.replace(" ", "").str.lower()
+    df_i2819_display["_BSSH_NORM"] = df_i2819_display["업소명"].fillna("").str.replace(" ", "").str.lower()
+
     return df_i2500_display, df_i2819_display
 
 
+
+from rapidfuzz import fuzz
 
 def fuzzy_search(df, query, threshold=75):
     query_norm = query.replace(" ", "").lower()
