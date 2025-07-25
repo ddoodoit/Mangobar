@@ -26,14 +26,20 @@ st.set_page_config(page_title="MangoBar 웹 검색", layout="wide")
 
 
 def load_data(selected_regions, query_addr, query_bssh, page=1):
-    offset = (page - 1) * PAGE_SIZE
     conn = sqlite3.connect(DB_PATH)
 
-    region_clauses = []
-    for region in selected_regions:
-        prefix = region[:4].lower()
-        region_clauses.append(f"_ADDR_LOWER LIKE '{prefix}%'")
-    region_condition = " OR ".join(region_clauses) if region_clauses else "1=1"
+    # region_condition과 파라미터 분리 처리
+    if selected_regions:
+        region_conditions = []
+        params_region = []
+        for region in selected_regions:
+            prefix = region[:4].lower() + '%'
+            region_conditions.append("_ADDR_LOWER LIKE ?")
+            params_region.append(prefix)
+        region_condition = "(" + " OR ".join(region_conditions) + ")"
+    else:
+        region_condition = "1=1"
+        params_region = []
 
     query_addr = query_addr.lower() if query_addr else ""
     query_bssh_norm = query_bssh.replace(" ", "").lower() if query_bssh else ""
@@ -41,7 +47,7 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
     sql_i2500 = f"""
         SELECT LCNS_NO, INDUTY_CD_NM, BSSH_NM, ADDR, PRMS_DT
         FROM i2500
-        WHERE ({region_condition})
+        WHERE {region_condition}
         AND _ADDR_LOWER LIKE ?
         AND _BSSH_NORM LIKE ?
     """
@@ -49,12 +55,12 @@ def load_data(selected_regions, query_addr, query_bssh, page=1):
     sql_i2819 = f"""
         SELECT LCNS_NO, INDUTY_NM, BSSH_NM, LOCP_ADDR, PRMS_DT, CLSBIZ_DT, CLSBIZ_DVS_CD_NM
         FROM i2819
-        WHERE ({region_condition})
+        WHERE {region_condition}
         AND _ADDR_LOWER LIKE ?
         AND _BSSH_NORM LIKE ?
     """
 
-    params = (f"%{query_addr}%", f"%{query_bssh_norm}%")
+    params = params_region + [f"%{query_addr}%", f"%{query_bssh_norm}%"]
 
     df_i2500 = pd.read_sql_query(sql_i2500, conn, params=params)
     df_i2819 = pd.read_sql_query(sql_i2819, conn, params=params)
